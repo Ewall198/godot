@@ -50,10 +50,10 @@ class JoltDistanceJoint3D final : public JoltJoint3D {
 	void _limit_distance_changed();
 	void _distance_changed();
 
-	double limit_spring_stiffness = 0.0;
-	double limit_spring_damping = 0.0;
-	double distance_min = 0.0;
-	double distance_max = INFINITY;
+	float limit_spring_stiffness = 0.0;
+	float limit_spring_damping = 0.0;
+	float distance_min = 0.0;
+	float distance_max = INFINITY;
 
 public:
 	JoltDistanceJoint3D(
@@ -65,8 +65,8 @@ public:
 
 	virtual PhysicsServer3D::JointType get_type() const override { return PhysicsServer3D::JOINT_TYPE_DISTANCE_JOINT; }
 
-	double get_jolt_param(Param p_param) const;
-	void set_jolt_param(Param p_param, double p_value);
+	float get_jolt_param(Param p_param) const;
+	void set_jolt_param(Param p_param, float p_value);
 
 	Vector3 get_local_a() const { return local_ref_a.origin; }
 	Vector3 get_local_b() const { return local_ref_b.origin; }
