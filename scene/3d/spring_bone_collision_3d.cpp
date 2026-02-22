@@ -30,6 +30,7 @@
 
 #include "spring_bone_collision_3d.h"
 
+#include "core/config/engine.h"
 #include "scene/3d/spring_bone_simulator_3d.h"
 
 PackedStringArray SpringBoneCollision3D::get_configuration_warnings() const {
@@ -44,7 +45,7 @@ PackedStringArray SpringBoneCollision3D::get_configuration_warnings() const {
 }
 
 void SpringBoneCollision3D::_validate_property(PropertyInfo &p_property) const {
-	if (p_property.name == "bone_name") {
+	if (Engine::get_singleton()->is_editor_hint() && p_property.name == "bone_name") {
 		Skeleton3D *sk = get_skeleton();
 		if (sk) {
 			p_property.hint = PROPERTY_HINT_ENUM_SUGGESTION;

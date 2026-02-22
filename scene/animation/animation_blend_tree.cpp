@@ -55,7 +55,7 @@ Variant AnimationNodeAnimation::get_parameter_default_value(const StringName &p_
 	if (p_parameter == backward) {
 		return false;
 	}
-	return 0;
+	return 0.0;
 }
 
 AnimationNode::NodeTimeInfo AnimationNodeAnimation::get_node_time_info() const {
@@ -78,7 +78,7 @@ AnimationNode::NodeTimeInfo AnimationNodeAnimation::get_node_time_info() const {
 }
 
 void AnimationNodeAnimation::_validate_property(PropertyInfo &p_property) const {
-	if (p_property.name == "animation" && get_editable_animation_list) {
+	if (Engine::get_singleton()->is_editor_hint() && p_property.name == "animation" && get_editable_animation_list) {
 		Vector<String> names = get_editable_animation_list();
 		String anims;
 		for (int i = 0; i < names.size(); i++) {
@@ -156,9 +156,10 @@ AnimationNode::NodeTimeInfo AnimationNodeAnimation::_process(const AnimationMixe
 	// 1. Progress for AnimationNode.
 	bool will_end = Animation::is_greater_or_equal_approx(cur_time + cur_delta, cur_len);
 	bool is_started = p_seek && !p_is_external_seeking && Math::is_zero_approx(cur_time);
+	bool immediately_after_start = is_started && advance_on_start;
 
 	// 1. Progress for AnimationNode.
-	if (is_started && advance_on_start) {
+	if (immediately_after_start) {
 		cur_time = cur_delta;
 	}
 	if (cur_loop_mode != Animation::LOOP_NONE) {
@@ -265,22 +266,40 @@ AnimationNode::NodeTimeInfo AnimationNodeAnimation::_process(const AnimationMixe
 	}
 
 	if (!p_test_only) {
+		// Force process first key for Discrete/Method/Audio/AnimationPlayback.
+		if (immediately_after_start) {
+			AnimationMixer::PlaybackInfo pi = p_playback_info;
+			pi.start = 0.0;
+			pi.end = cur_len;
+			if (play_mode == PLAY_MODE_FORWARD) {
+				pi.time = 0;
+			} else {
+				pi.time = anim_size;
+			}
+			pi.delta = 0;
+			pi.weight = CMP_EPSILON;
+			blend_animation(animation, pi);
+		}
+
 		AnimationMixer::PlaybackInfo pi = p_playback_info;
 		pi.start = 0.0;
 		pi.end = cur_len;
 		if (play_mode == PLAY_MODE_FORWARD) {
 			pi.time = cur_playback_time;
-			pi.delta = cur_delta;
 		} else {
 			pi.time = anim_size - cur_playback_time;
+		}
+		if (node_backward ? cur_backward : !cur_backward) {
+			pi.delta = cur_delta;
+		} else {
 			pi.delta = -cur_delta;
 		}
 		pi.weight = 1.0;
 		pi.looped_flag = looped_flag;
 		blend_animation(animation, pi);
-	}
 
-	set_parameter(backward, cur_backward);
+		set_parameter(backward, cur_backward);
+	}
 
 	return nti;
 }
@@ -384,9 +403,9 @@ void AnimationNodeAnimation::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "play_mode", PROPERTY_HINT_ENUM, "Forward,Backward"), "set_play_mode", "get_play_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "advance_on_start"), "set_advance_on_start", "is_advance_on_start");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_custom_timeline"), "set_use_custom_timeline", "is_using_custom_timeline");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "timeline_length", PROPERTY_HINT_RANGE, "0.001,60,0.001,or_greater,or_less,hide_slider,suffix:s"), "set_timeline_length", "get_timeline_length");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "timeline_length", PROPERTY_HINT_RANGE, "0.001,60,0.001,or_greater,or_less,hide_control,suffix:s"), "set_timeline_length", "get_timeline_length");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stretch_time_scale"), "set_stretch_time_scale", "is_stretching_time_scale");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "start_offset", PROPERTY_HINT_RANGE, "-60,60,0.001,or_greater,or_less,hide_slider,suffix:s"), "set_start_offset", "get_start_offset");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "start_offset", PROPERTY_HINT_RANGE, "-60,60,0.001,or_greater,or_less,hide_control,suffix:s"), "set_start_offset", "get_start_offset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "loop_mode", PROPERTY_HINT_ENUM, "None,Linear,Ping-Pong"), "set_loop_mode", "get_loop_mode");
 
 	BIND_ENUM_CONSTANT(PLAY_MODE_FORWARD);
@@ -438,10 +457,10 @@ Variant AnimationNodeOneShot::get_parameter_default_value(const StringName &p_pa
 	} else if (p_parameter == active || p_parameter == internal_active) {
 		return false;
 	} else if (p_parameter == time_to_restart) {
-		return -1;
-	} else {
-		return 0.0;
+		return -1.0;
 	}
+
+	return 0.0;
 }
 
 bool AnimationNodeOneShot::is_parameter_read_only(const StringName &p_parameter) const {
@@ -527,6 +546,14 @@ bool AnimationNodeOneShot::is_loop_broken_at_end() const {
 	return break_loop_at_end;
 }
 
+void AnimationNodeOneShot::set_abort_on_reset(bool p_enable) {
+	abort_on_reset = p_enable;
+}
+
+bool AnimationNodeOneShot::is_aborted_on_reset() const {
+	return abort_on_reset;
+}
+
 String AnimationNodeOneShot::get_caption() const {
 	return "OneShot";
 }
@@ -547,7 +574,6 @@ AnimationNode::NodeTimeInfo AnimationNodeOneShot::_process(const AnimationMixer:
 	set_parameter(request, ONE_SHOT_REQUEST_NONE);
 
 	bool is_shooting = true;
-	bool clear_remaining_fade = false;
 	bool is_fading_out = cur_active == true && cur_internal_active == false;
 
 	double p_time = p_playback_info.time;
@@ -556,15 +582,25 @@ AnimationNode::NodeTimeInfo AnimationNodeOneShot::_process(const AnimationMixer:
 	bool p_seek = p_playback_info.seeked;
 	bool p_is_external_seeking = p_playback_info.is_external_seeking;
 
-	if (Math::is_zero_approx(p_time) && p_seek && !p_is_external_seeking) {
-		clear_remaining_fade = true; // Reset occurs.
+	bool do_start = cur_request == ONE_SHOT_REQUEST_FIRE;
+
+	bool is_reset = Math::is_zero_approx(p_time) && p_seek && !p_is_external_seeking;
+	if (is_reset && cur_internal_active) {
+		do_start = true;
 	}
 
-	bool do_start = cur_request == ONE_SHOT_REQUEST_FIRE;
-	if (cur_request == ONE_SHOT_REQUEST_ABORT) {
+	bool is_abort = cur_request == ONE_SHOT_REQUEST_ABORT;
+	if (is_reset && !do_start && (is_fading_out || (abort_on_reset && cur_active))) {
+		is_abort = true;
+	}
+
+	if (is_abort) {
 		set_parameter(internal_active, false);
 		set_parameter(active, false);
 		set_parameter(time_to_restart, -1);
+		set_parameter(fade_out_remaining, 0);
+		cur_fade_out_remaining = 0;
+		is_fading_out = false;
 		is_shooting = false;
 	} else if (cur_request == ONE_SHOT_REQUEST_FADE_OUT && !is_fading_out) { // If fading, keep current fade.
 		if (cur_active) {
@@ -592,17 +628,6 @@ AnimationNode::NodeTimeInfo AnimationNodeOneShot::_process(const AnimationMixer:
 	}
 
 	bool os_seek = p_seek;
-
-	if (clear_remaining_fade) {
-		os_seek = false;
-		cur_fade_out_remaining = 0;
-		set_parameter(fade_out_remaining, 0);
-		if (is_fading_out) {
-			is_fading_out = false;
-			set_parameter(internal_active, false);
-			set_parameter(active, false);
-		}
-	}
 
 	if (!is_shooting) {
 		AnimationMixer::PlaybackInfo pi = p_playback_info;
@@ -678,7 +703,7 @@ AnimationNode::NodeTimeInfo AnimationNodeOneShot::_process(const AnimationMixer:
 		double os_rem = os_nti.get_remain(break_loop_at_end) * tscl;
 		if (Animation::is_less_or_equal_approx(os_rem, fade_out)) {
 			is_fading_out = true;
-			cur_fade_out_remaining = os_rem;
+			cur_fade_out_remaining = os_rem + abs_delta;
 			cur_fade_in_remaining = 0;
 			set_parameter(internal_active, false);
 		}
@@ -721,6 +746,9 @@ void AnimationNodeOneShot::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_break_loop_at_end", "enable"), &AnimationNodeOneShot::set_break_loop_at_end);
 	ClassDB::bind_method(D_METHOD("is_loop_broken_at_end"), &AnimationNodeOneShot::is_loop_broken_at_end);
 
+	ClassDB::bind_method(D_METHOD("set_abort_on_reset", "enable"), &AnimationNodeOneShot::set_abort_on_reset);
+	ClassDB::bind_method(D_METHOD("is_aborted_on_reset"), &AnimationNodeOneShot::is_aborted_on_reset);
+
 	ClassDB::bind_method(D_METHOD("set_autorestart", "active"), &AnimationNodeOneShot::set_auto_restart_enabled);
 	ClassDB::bind_method(D_METHOD("has_autorestart"), &AnimationNodeOneShot::is_auto_restart_enabled);
 
@@ -736,10 +764,11 @@ void AnimationNodeOneShot::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mix_mode", PROPERTY_HINT_ENUM, "Blend,Add"), "set_mix_mode", "get_mix_mode");
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fadein_time", PROPERTY_HINT_RANGE, "0,60,0.01,or_greater,suffix:s"), "set_fadein_time", "get_fadein_time");
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fadein_curve", PROPERTY_HINT_RESOURCE_TYPE, "Curve"), "set_fadein_curve", "get_fadein_curve");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fadein_curve", PROPERTY_HINT_RESOURCE_TYPE, Curve::get_class_static()), "set_fadein_curve", "get_fadein_curve");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fadeout_time", PROPERTY_HINT_RANGE, "0,60,0.01,or_greater,suffix:s"), "set_fadeout_time", "get_fadeout_time");
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fadeout_curve", PROPERTY_HINT_RESOURCE_TYPE, "Curve"), "set_fadeout_curve", "get_fadeout_curve");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fadeout_curve", PROPERTY_HINT_RESOURCE_TYPE, Curve::get_class_static()), "set_fadeout_curve", "get_fadeout_curve");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "break_loop_at_end"), "set_break_loop_at_end", "is_loop_broken_at_end");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "abort_on_reset"), "set_abort_on_reset", "is_aborted_on_reset");
 
 	ADD_GROUP("Auto Restart", "autorestart_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "autorestart"), "set_autorestart", "has_autorestart");
@@ -774,7 +803,7 @@ Variant AnimationNodeAdd2::get_parameter_default_value(const StringName &p_param
 		return ret;
 	}
 
-	return 0;
+	return 0.0;
 }
 
 String AnimationNodeAdd2::get_caption() const {
@@ -815,7 +844,7 @@ Variant AnimationNodeAdd3::get_parameter_default_value(const StringName &p_param
 		return ret;
 	}
 
-	return 0;
+	return 0.0;
 }
 
 String AnimationNodeAdd3::get_caption() const {
@@ -859,7 +888,7 @@ Variant AnimationNodeBlend2::get_parameter_default_value(const StringName &p_par
 		return ret;
 	}
 
-	return 0; // For blend amount.
+	return 0.0; // For blend amount.
 }
 
 String AnimationNodeBlend2::get_caption() const {
@@ -900,7 +929,7 @@ Variant AnimationNodeBlend3::get_parameter_default_value(const StringName &p_par
 		return ret;
 	}
 
-	return 0; // For blend amount.
+	return 0.0; // For blend amount.
 }
 
 String AnimationNodeBlend3::get_caption() const {
@@ -940,7 +969,7 @@ Variant AnimationNodeSub2::get_parameter_default_value(const StringName &p_param
 		return ret;
 	}
 
-	return 0;
+	return 0.0;
 }
 
 String AnimationNodeSub2::get_caption() const {
@@ -1146,7 +1175,7 @@ Variant AnimationNodeTransition::get_parameter_default_value(const StringName &p
 	if (p_parameter == prev_xfading) {
 		return 0.0;
 	} else if (p_parameter == prev_index || p_parameter == current_index) {
-		return -1;
+		return (int)-1;
 	} else {
 		return String();
 	}
@@ -1429,7 +1458,7 @@ void AnimationNodeTransition::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_allow_transition_to_self"), &AnimationNodeTransition::is_allow_transition_to_self);
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "xfade_time", PROPERTY_HINT_RANGE, "0,120,0.01,suffix:s"), "set_xfade_time", "get_xfade_time");
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "xfade_curve", PROPERTY_HINT_RESOURCE_TYPE, "Curve"), "set_xfade_curve", "get_xfade_curve");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "xfade_curve", PROPERTY_HINT_RESOURCE_TYPE, Curve::get_class_static()), "set_xfade_curve", "get_xfade_curve");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "allow_transition_to_self"), "set_allow_transition_to_self", "is_allow_transition_to_self");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "input_count", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_ARRAY | PROPERTY_USAGE_UPDATE_ALL_IF_MODIFIED, "Inputs,input_"), "set_input_count", "get_input_count");
 }
@@ -1561,7 +1590,8 @@ void AnimationNodeBlendTree::rename_node(const StringName &p_name, const StringN
 
 	nodes[p_name].node->disconnect_changed(callable_mp(this, &AnimationNodeBlendTree::_node_changed));
 
-	nodes[p_new_name] = nodes[p_name];
+	const Node temp_copy = nodes[p_name];
+	nodes[p_new_name] = temp_copy; // might realloc
 	nodes.erase(p_name);
 
 	// Rename connections.
@@ -1787,7 +1817,7 @@ void AnimationNodeBlendTree::_get_property_list(List<PropertyInfo> *p_list) cons
 	for (const StringName &E : names) {
 		String prop_name = E;
 		if (prop_name != "output") {
-			p_list->push_back(PropertyInfo(Variant::OBJECT, "nodes/" + prop_name + "/node", PROPERTY_HINT_RESOURCE_TYPE, "AnimationNode", PROPERTY_USAGE_NO_EDITOR));
+			p_list->push_back(PropertyInfo(Variant::OBJECT, "nodes/" + prop_name + "/node", PROPERTY_HINT_RESOURCE_TYPE, AnimationNode::get_class_static(), PROPERTY_USAGE_NO_EDITOR));
 		}
 		p_list->push_back(PropertyInfo(Variant::VECTOR2, "nodes/" + prop_name + "/position", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR));
 	}

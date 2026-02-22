@@ -31,6 +31,8 @@
 #include "editor_export_platform_pc.h"
 
 #include "core/config/project_settings.h"
+#include "core/io/dir_access.h"
+#include "core/os/shared_object.h"
 #include "scene/resources/image_texture.h"
 
 void EditorExportPlatformPC::get_preset_features(const Ref<EditorExportPreset> &p_preset, List<String> *r_features) const {
@@ -42,7 +44,8 @@ void EditorExportPlatformPC::get_preset_features(const Ref<EditorExportPreset> &
 		r_features->push_back("etc2");
 		r_features->push_back("astc");
 	}
-	if (p_preset->get("shader_baker/enabled")) {
+	if (!p_preset->is_dedicated_server() && p_preset->get("shader_baker/enabled")) {
+		// Don't use the shader baker if exporting as a dedicated server, as no rendering is performed.
 		r_features->push_back("shader_baker");
 	}
 	// PC platforms only have one architecture per export, since
@@ -66,7 +69,7 @@ void EditorExportPlatformPC::get_export_options(List<ExportOption> *r_options) c
 }
 
 String EditorExportPlatformPC::get_export_option_warning(const EditorExportPreset *p_preset, const StringName &p_name) const {
-	if (p_name == "shader_baker/enabled") {
+	if (p_name == "shader_baker/enabled" && bool(p_preset->get("shader_baker/enabled"))) {
 		String export_renderer = GLOBAL_GET("rendering/renderer/rendering_method");
 		if (OS::get_singleton()->get_current_rendering_method() == "gl_compatibility") {
 			return TTR("\"Shader Baker\" is not supported when using the Compatibility renderer.");

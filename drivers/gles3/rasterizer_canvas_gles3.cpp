@@ -32,18 +32,17 @@
 
 #ifdef GLES3_ENABLED
 
-#include "rasterizer_gles3.h"
-#include "rasterizer_scene_gles3.h"
-
 #include "core/config/project_settings.h"
 #include "core/math/geometry_2d.h"
 #include "core/math/transform_interpolator.h"
+#include "drivers/gles3/rasterizer_util_gles3.h"
+#include "drivers/gles3/storage/config.h"
+#include "drivers/gles3/storage/mesh_storage.h"
+#include "drivers/gles3/storage/particles_storage.h"
+#include "drivers/gles3/storage/texture_storage.h"
+#include "drivers/gles3/storage/utilities.h"
 #include "servers/rendering/rendering_server_default.h"
-#include "storage/config.h"
-#include "storage/material_storage.h"
-#include "storage/mesh_storage.h"
-#include "storage/particles_storage.h"
-#include "storage/texture_storage.h"
+#include "servers/rendering/rendering_server_globals.h"
 
 void RasterizerCanvasGLES3::_update_transform_2d_to_mat4(const Transform2D &p_transform, float *p_mat4) {
 	p_mat4[0] = p_transform.columns[0][0];
@@ -1123,7 +1122,7 @@ void RasterizerCanvasGLES3::_record_item_commands(const Item *p_item, RID p_rend
 			case Item::Command::TYPE_PRIMITIVE: {
 				const Item::CommandPrimitive *primitive = static_cast<const Item::CommandPrimitive *>(c);
 
-				if (primitive->point_count != state.canvas_instance_batches[state.current_batch_index].primitive_points || state.canvas_instance_batches[state.current_batch_index].command_type != Item::Command::TYPE_PRIMITIVE) {
+				if (primitive->point_count != state.canvas_instance_batches[state.current_batch_index].primitive_points || state.canvas_instance_batches[state.current_batch_index].command_type != Item::Command::TYPE_PRIMITIVE || primitive->texture != state.canvas_instance_batches[state.current_batch_index].tex) {
 					_new_batch(r_batch_broken);
 					state.canvas_instance_batches[state.current_batch_index].tex = primitive->texture;
 					state.canvas_instance_batches[state.current_batch_index].primitive_points = primitive->point_count;
@@ -1468,9 +1467,9 @@ void RasterizerCanvasGLES3::_render_batch(Light *p_lights, uint32_t p_index, Ren
 				uint64_t vertex_input_mask = state.canvas_instance_batches[p_index].vertex_input_mask;
 
 				if (mesh_instance.is_valid()) {
-					mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(mesh_instance, j, vertex_input_mask, vertex_array_gl);
+					mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(mesh_instance, j, vertex_input_mask, false, vertex_array_gl);
 				} else {
-					mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, vertex_input_mask, vertex_array_gl);
+					mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, vertex_input_mask, false, vertex_array_gl);
 				}
 
 				index_array_gl = mesh_storage->mesh_surface_get_index_buffer(surface, 0);
@@ -1662,7 +1661,7 @@ void RasterizerCanvasGLES3::light_update_shadow(RID p_rid, int p_shadow_index, c
 	glEnable(GL_SCISSOR_TEST);
 	glScissor(0, p_shadow_index * 2, state.shadow_texture_size, 2);
 	glClearColor(p_far, p_far, p_far, 1.0);
-	RasterizerGLES3::clear_depth(1.0);
+	RasterizerUtilGLES3::clear_depth(1.0);
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -1795,7 +1794,7 @@ void RasterizerCanvasGLES3::light_update_directional_shadow(RID p_rid, int p_sha
 	glEnable(GL_SCISSOR_TEST);
 	glScissor(0, p_shadow_index * 2, state.shadow_texture_size, 2);
 	glClearColor(1.0, 1.0, 1.0, 1.0);
-	RasterizerGLES3::clear_depth(1.0);
+	RasterizerUtilGLES3::clear_depth(1.0);
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -2132,21 +2131,21 @@ void RasterizerCanvasGLES3::occluder_polygon_set_shape(RID p_occluder, const Vec
 			glGenBuffers(1, &oc->sdf_vertex_buffer);
 			glBindBuffer(GL_ARRAY_BUFFER, oc->sdf_vertex_buffer);
 
-			GLES3::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, oc->sdf_vertex_buffer, oc->sdf_point_count * 2 * sizeof(float), p_points.to_byte_array().ptr(), GL_STATIC_DRAW, "Occluder polygon SDF vertex buffer");
+			GLES3::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, oc->sdf_vertex_buffer, oc->sdf_point_count * 2 * sizeof(float), p_points.ptr(), GL_STATIC_DRAW, "Occluder polygon SDF vertex buffer");
 
 			glEnableVertexAttribArray(RS::ARRAY_VERTEX);
 			glVertexAttribPointer(RS::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
 
 			glGenBuffers(1, &oc->sdf_index_buffer);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, oc->sdf_index_buffer);
-			GLES3::Utilities::get_singleton()->buffer_allocate_data(GL_ELEMENT_ARRAY_BUFFER, oc->sdf_index_buffer, oc->sdf_index_count * sizeof(uint32_t), sdf_indices.to_byte_array().ptr(), GL_STATIC_DRAW, "Occluder polygon SDF index buffer");
+			GLES3::Utilities::get_singleton()->buffer_allocate_data(GL_ELEMENT_ARRAY_BUFFER, oc->sdf_index_buffer, oc->sdf_index_count * sizeof(uint32_t), sdf_indices.ptr(), GL_STATIC_DRAW, "Occluder polygon SDF index buffer");
 
 			glBindVertexArray(0);
 		} else {
 			glBindBuffer(GL_ARRAY_BUFFER, oc->sdf_vertex_buffer);
-			glBufferData(GL_ARRAY_BUFFER, p_points.size() * 2 * sizeof(float), p_points.to_byte_array().ptr(), GL_STATIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, p_points.size() * 2 * sizeof(float), p_points.ptr(), GL_STATIC_DRAW);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, oc->sdf_index_buffer);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sdf_indices.size() * sizeof(uint32_t), sdf_indices.to_byte_array().ptr(), GL_STATIC_DRAW);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sdf_indices.size() * sizeof(uint32_t), sdf_indices.ptr(), GL_STATIC_DRAW);
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 		}
@@ -2161,7 +2160,7 @@ void RasterizerCanvasGLES3::occluder_polygon_set_cull_mode(RID p_occluder, RS::C
 
 void RasterizerCanvasGLES3::set_shadow_texture_size(int p_size) {
 	GLES3::Config *config = GLES3::Config::get_singleton();
-	p_size = nearest_power_of_2_templated(p_size);
+	p_size = Math::nearest_power_of_2_templated(p_size);
 
 	if (p_size > config->max_texture_size) {
 		p_size = config->max_texture_size;

@@ -32,15 +32,17 @@
 
 #import "app_delegate_service.h"
 #import "apple_embedded.h"
+#import "godot_keyboard_input_view.h"
 #import "godot_view_apple_embedded.h"
+#import "godot_view_controller.h"
 #import "key_mapping_apple_embedded.h"
-#import "keyboard_input_view.h"
 #import "os_apple_embedded.h"
 #import "tts_apple_embedded.h"
-#import "view_controller.h"
 
 #include "core/config/project_settings.h"
+#include "core/input/input.h"
 #include "core/io/file_access_pack.h"
+#include "servers/display/native_menu.h"
 
 #import <GameController/GameController.h>
 
@@ -96,7 +98,7 @@ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering
 	if (rendering_driver == "metal") {
 		if (@available(iOS 14.0, *)) {
 			layer = [GDTAppDelegateService.viewController.godotView initializeRenderingForDriver:@"metal"];
-			wpd.metal.layer = (CAMetalLayer *)layer;
+			wpd.metal.layer = (__bridge CA::MetalLayer *)layer;
 			rendering_context = memnew(RenderingContextDriverMetal);
 		} else {
 			OS::get_singleton()->alert("Metal is only supported on iOS 14.0 and later.");
@@ -112,10 +114,10 @@ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering
 #if defined(GLES3_ENABLED)
 			bool fallback_to_opengl3 = GLOBAL_GET("rendering/rendering_device/fallback_to_opengl3");
 			if (fallback_to_opengl3 && rendering_driver != "opengl3") {
-				WARN_PRINT("Your device seem not to support MoltenVK or Metal, switching to OpenGL 3.");
+				WARN_PRINT("Your device does not seem to support MoltenVK or Metal, switching to OpenGL 3.");
 				rendering_driver = "opengl3";
-				OS::get_singleton()->set_current_rendering_method("gl_compatibility");
-				OS::get_singleton()->set_current_rendering_driver_name(rendering_driver);
+				OS::get_singleton()->set_current_rendering_method("gl_compatibility", OS::RENDERING_SOURCE_FALLBACK);
+				OS::get_singleton()->set_current_rendering_driver_name(rendering_driver, OS::RENDERING_SOURCE_FALLBACK);
 			} else
 #endif
 			{
@@ -291,7 +293,12 @@ void DisplayServerAppleEmbedded::touch_drag(int p_idx, int p_prev_x, int p_prev_
 }
 
 void DisplayServerAppleEmbedded::perform_event(const Ref<InputEvent> &p_event) {
-	Input::get_singleton()->parse_input_event(p_event);
+	Input *input_singleton = Input::get_singleton();
+	if (input_singleton == nullptr) {
+		return;
+	}
+
+	input_singleton->parse_input_event(p_event);
 }
 
 void DisplayServerAppleEmbedded::touches_canceled(int p_idx) {
@@ -408,7 +415,7 @@ TypedArray<Dictionary> DisplayServerAppleEmbedded::tts_get_voices() const {
 	return [tts getVoices];
 }
 
-void DisplayServerAppleEmbedded::tts_speak(const String &p_text, const String &p_voice, int p_volume, float p_pitch, float p_rate, int p_utterance_id, bool p_interrupt) {
+void DisplayServerAppleEmbedded::tts_speak(const String &p_text, const String &p_voice, int p_volume, float p_pitch, float p_rate, int64_t p_utterance_id, bool p_interrupt) {
 	if (unlikely(!tts)) {
 		initialize_tts();
 	}
@@ -492,10 +499,18 @@ int DisplayServerAppleEmbedded::get_primary_screen() const {
 }
 
 Point2i DisplayServerAppleEmbedded::screen_get_position(int p_screen) const {
-	return Size2i();
+	p_screen = _get_screen_index(p_screen);
+	int screen_count = get_screen_count();
+	ERR_FAIL_INDEX_V(p_screen, screen_count, Point2i());
+
+	return Point2i(0, 0);
 }
 
 Size2i DisplayServerAppleEmbedded::screen_get_size(int p_screen) const {
+	p_screen = _get_screen_index(p_screen);
+	int screen_count = get_screen_count();
+	ERR_FAIL_INDEX_V(p_screen, screen_count, Size2i());
+
 	CALayer *layer = GDTAppDelegateService.viewController.godotView.renderingLayer;
 
 	if (!layer) {
@@ -506,6 +521,10 @@ Size2i DisplayServerAppleEmbedded::screen_get_size(int p_screen) const {
 }
 
 Rect2i DisplayServerAppleEmbedded::screen_get_usable_rect(int p_screen) const {
+	p_screen = _get_screen_index(p_screen);
+	int screen_count = get_screen_count();
+	ERR_FAIL_INDEX_V(p_screen, screen_count, Rect2i());
+
 	return Rect2i(screen_get_position(p_screen), screen_get_size(p_screen));
 }
 
@@ -550,7 +569,8 @@ void DisplayServerAppleEmbedded::window_set_title(const String &p_title, WindowI
 }
 
 int DisplayServerAppleEmbedded::window_get_current_screen(WindowID p_window) const {
-	return SCREEN_OF_MAIN_WINDOW;
+	ERR_FAIL_COND_V(p_window != MAIN_WINDOW_ID, INVALID_SCREEN);
+	return 0;
 }
 
 void DisplayServerAppleEmbedded::window_set_current_screen(int p_screen, WindowID p_window) {
@@ -594,9 +614,8 @@ void DisplayServerAppleEmbedded::window_set_size(const Size2i p_size, WindowID p
 }
 
 Size2i DisplayServerAppleEmbedded::window_get_size(WindowID p_window) const {
-	id<UIApplicationDelegate> appDelegate = [[UIApplication sharedApplication] delegate];
-	CGRect windowBounds = appDelegate.window.bounds;
-	return Size2i(windowBounds.size.width, windowBounds.size.height) * screen_get_max_scale();
+	CGRect viewBounds = GDTAppDelegateService.viewController.view.bounds;
+	return Size2i(viewBounds.size.width, viewBounds.size.height) * screen_get_max_scale();
 }
 
 Size2i DisplayServerAppleEmbedded::window_get_size_with_decorations(WindowID p_window) const {
@@ -640,6 +659,10 @@ float DisplayServerAppleEmbedded::screen_get_max_scale() const {
 }
 
 void DisplayServerAppleEmbedded::screen_set_orientation(DisplayServer::ScreenOrientation p_orientation, int p_screen) {
+	p_screen = _get_screen_index(p_screen);
+	int screen_count = get_screen_count();
+	ERR_FAIL_INDEX(p_screen, screen_count);
+
 	screen_orientation = p_orientation;
 	if (@available(iOS 16.0, *)) {
 		[GDTAppDelegateService.viewController setNeedsUpdateOfSupportedInterfaceOrientations];
@@ -652,6 +675,10 @@ void DisplayServerAppleEmbedded::screen_set_orientation(DisplayServer::ScreenOri
 }
 
 DisplayServer::ScreenOrientation DisplayServerAppleEmbedded::screen_get_orientation(int p_screen) const {
+	p_screen = _get_screen_index(p_screen);
+	int screen_count = get_screen_count();
+	ERR_FAIL_INDEX_V(p_screen, screen_count, SCREEN_LANDSCAPE);
+
 	return screen_orientation;
 }
 
@@ -791,4 +818,12 @@ DisplayServer::VSyncMode DisplayServerAppleEmbedded::window_get_vsync_mode(Windo
 	}
 #endif
 	return DisplayServer::VSYNC_ENABLED;
+}
+
+void DisplayServerAppleEmbedded::set_native_icon(const String &p_filename) {
+	// Not supported on Apple embedded platforms.
+}
+
+void DisplayServerAppleEmbedded::set_icon(const Ref<Image> &p_icon) {
+	// Not supported on Apple embedded platforms.
 }

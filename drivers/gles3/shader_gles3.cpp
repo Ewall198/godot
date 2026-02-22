@@ -34,8 +34,8 @@
 
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
-
-#include "drivers/gles3/rasterizer_gles3.h"
+#include "core/string/string_builder.h"
+#include "drivers/gles3/rasterizer_util_gles3.h"
 #include "drivers/gles3/storage/config.h"
 
 static String _mkid(const String &p_id) {
@@ -154,7 +154,7 @@ RID ShaderGLES3::version_create() {
 }
 
 void ShaderGLES3::_build_variant_code(StringBuilder &builder, uint32_t p_variant, const Version *p_version, StageType p_stage_type, uint64_t p_specialization) {
-	if (RasterizerGLES3::is_gles_over_gl()) {
+	if (RasterizerUtilGLES3::is_gles_over_gl()) {
 		builder.append("#version 330\n");
 		builder.append("#define USE_GLES_OVER_GL\n");
 	} else {
@@ -215,7 +215,7 @@ void ShaderGLES3::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 	// Default to highp precision unless specified otherwise.
 	builder.append("precision highp float;\n");
 	builder.append("precision highp int;\n");
-	if (!RasterizerGLES3::is_gles_over_gl()) {
+	if (!RasterizerUtilGLES3::is_gles_over_gl()) {
 		builder.append("precision highp sampler2D;\n");
 		builder.append("precision highp samplerCube;\n");
 		builder.append("precision highp sampler2DArray;\n");
@@ -527,7 +527,7 @@ String ShaderGLES3::_version_get_sha1(Version *p_version) const {
 		hash_build.append("[custom_defines:" + itos(i) + "]");
 		hash_build.append(p_version->custom_defines[i].get_data());
 	}
-	if (RasterizerGLES3::is_gles_over_gl()) {
+	if (RasterizerUtilGLES3::is_gles_over_gl()) {
 		hash_build.append("[gl]");
 	} else {
 		hash_build.append("[gles]");
@@ -546,7 +546,7 @@ bool ShaderGLES3::_load_from_cache(Version *p_version) {
 	return false;
 #else
 #if !defined(ANDROID_ENABLED) && !defined(IOS_ENABLED)
-	if (RasterizerGLES3::is_gles_over_gl() && (glProgramBinary == nullptr)) { // ARB_get_program_binary extension not available.
+	if (RasterizerUtilGLES3::is_gles_over_gl() && (glProgramBinary == nullptr)) { // ARB_get_program_binary extension not available.
 		return false;
 	}
 #endif
@@ -570,10 +570,10 @@ bool ShaderGLES3::_load_from_cache(Version *p_version) {
 	int cache_variant_count = static_cast<int>(f->get_32());
 	ERR_FAIL_COND_V_MSG(cache_variant_count != variant_count, false, "shader cache variant count mismatch, expected " + itos(variant_count) + " got " + itos(cache_variant_count)); //should not happen but check
 
-	LocalVector<OAHashMap<uint64_t, Version::Specialization>> variants;
+	LocalVector<AHashMap<uint64_t, Version::Specialization>> variants;
 	for (int i = 0; i < cache_variant_count; i++) {
 		uint32_t cache_specialization_count = f->get_32();
-		OAHashMap<uint64_t, Version::Specialization> variant;
+		AHashMap<uint64_t, Version::Specialization> variant;
 		for (uint32_t j = 0; j < cache_specialization_count; j++) {
 			uint64_t specialization_key = f->get_64();
 			uint32_t variant_size = f->get_32();
@@ -619,7 +619,7 @@ bool ShaderGLES3::_load_from_cache(Version *p_version) {
 
 			variant.insert(specialization_key, specialization);
 		}
-		variants.push_back(variant);
+		variants.push_back(std::move(variant));
 	}
 	p_version->variants = variants;
 
@@ -633,7 +633,7 @@ void ShaderGLES3::_save_to_cache(Version *p_version) {
 #else
 	ERR_FAIL_COND(!shader_cache_dir_valid);
 #if !defined(ANDROID_ENABLED) && !defined(IOS_ENABLED)
-	if (RasterizerGLES3::is_gles_over_gl() && (glGetProgramBinary == nullptr)) { // ARB_get_program_binary extension not available.
+	if (RasterizerUtilGLES3::is_gles_over_gl() && (glGetProgramBinary == nullptr)) { // ARB_get_program_binary extension not available.
 		return;
 	}
 #endif
@@ -648,18 +648,14 @@ void ShaderGLES3::_save_to_cache(Version *p_version) {
 	f->store_32(variant_count);
 
 	for (int i = 0; i < variant_count; i++) {
-		int cache_specialization_count = p_version->variants[i].get_num_elements();
+		int cache_specialization_count = p_version->variants[i].size();
 		f->store_32(cache_specialization_count);
 
-		for (OAHashMap<uint64_t, ShaderGLES3::Version::Specialization>::Iterator it = p_version->variants[i].iter(); it.valid; it = p_version->variants[i].next_iter(it)) {
-			const uint64_t specialization_key = *it.key;
+		for (KeyValue<uint64_t, ShaderGLES3::Version::Specialization> &kv : p_version->variants[i]) {
+			const uint64_t specialization_key = kv.key;
 			f->store_64(specialization_key);
 
-			const Version::Specialization *specialization = it.value;
-			if (specialization == nullptr) {
-				f->store_32(0);
-				continue;
-			}
+			const Version::Specialization *specialization = &kv.value;
 			GLint program_size = 0;
 			glGetProgramiv(specialization->id, GL_PROGRAM_BINARY_LENGTH, &program_size);
 			if (program_size == 0) {
@@ -689,11 +685,11 @@ void ShaderGLES3::_clear_version(Version *p_version) {
 	}
 
 	for (int i = 0; i < variant_count; i++) {
-		for (OAHashMap<uint64_t, Version::Specialization>::Iterator it = p_version->variants[i].iter(); it.valid; it = p_version->variants[i].next_iter(it)) {
-			if (it.value->id != 0) {
-				glDeleteShader(it.value->vert_id);
-				glDeleteShader(it.value->frag_id);
-				glDeleteProgram(it.value->id);
+		for (KeyValue<uint64_t, Version::Specialization> &kv : p_version->variants[i]) {
+			if (kv.value.id != 0) {
+				glDeleteShader(kv.value.vert_id);
+				glDeleteShader(kv.value.frag_id);
+				glDeleteProgram(kv.value.id);
 			}
 		}
 	}
@@ -709,8 +705,7 @@ void ShaderGLES3::_initialize_version(Version *p_version) {
 	}
 	p_version->variants.reserve(variant_count);
 	for (int i = 0; i < variant_count; i++) {
-		OAHashMap<uint64_t, Version::Specialization> variant;
-		p_version->variants.push_back(variant);
+		p_version->variants.push_back(AHashMap<uint64_t, Version::Specialization>());
 		Version::Specialization spec;
 		_compile_specialization(spec, i, p_version, specialization_default_mask);
 		p_version->variants[i].insert(specialization_default_mask, spec);

@@ -205,7 +205,7 @@ IPAddress IP::get_resolve_item_address(ResolverID p_id) const {
 		return IPAddress();
 	}
 
-	List<IPAddress> res = resolver->queue[p_id].response;
+	List<IPAddress> res(resolver->queue[p_id].response);
 
 	for (const IPAddress &E : res) {
 		if (E.is_valid()) {
@@ -224,7 +224,7 @@ Array IP::get_resolve_item_addresses(ResolverID p_id) const {
 		return Array();
 	}
 
-	List<IPAddress> res = resolver->queue[p_id].response;
+	List<IPAddress> res(resolver->queue[p_id].response);
 
 	Array result;
 	for (const IPAddress &E : res) {
@@ -259,7 +259,7 @@ PackedStringArray IP::_get_local_addresses() const {
 	List<IPAddress> ip_addresses;
 	get_local_addresses(&ip_addresses);
 	for (const IPAddress &E : ip_addresses) {
-		addresses.push_back(E);
+		addresses.push_back(String(E));
 	}
 
 	return addresses;
@@ -331,7 +331,7 @@ IP *IP::get_singleton() {
 IP *(*IP::_create)() = nullptr;
 
 IP *IP::create() {
-	ERR_FAIL_COND_V_MSG(singleton, nullptr, "IP singleton already exist.");
+	ERR_FAIL_COND_V_MSG(singleton, nullptr, "IP singleton already exists.");
 	ERR_FAIL_NULL_V(_create, nullptr);
 	return _create();
 }

@@ -28,16 +28,15 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifdef GLES3_ENABLED
-
 #include "particles_storage.h"
 
-#include "config.h"
-#include "material_storage.h"
-#include "mesh_storage.h"
-#include "texture_storage.h"
-#include "utilities.h"
+#ifdef GLES3_ENABLED
 
+#include "drivers/gles3/storage/config.h"
+#include "drivers/gles3/storage/material_storage.h"
+#include "drivers/gles3/storage/mesh_storage.h"
+#include "drivers/gles3/storage/texture_storage.h"
+#include "drivers/gles3/storage/utilities.h"
 #include "servers/rendering/rendering_server_globals.h"
 
 using namespace GLES3;
@@ -1169,6 +1168,7 @@ void ParticlesStorage::update_particles() {
 		}
 
 		SWAP(particles->front_instance_buffer, particles->back_instance_buffer);
+		particles->last_change = RSG::rasterizer->get_frame_number();
 
 		// At the end of update, the back_buffer contains the most up-to-date-information to read from.
 
@@ -1282,7 +1282,7 @@ GLuint ParticlesStorage::particles_collision_get_heightfield_framebuffer(RID p_p
 #ifdef DEBUG_ENABLED
 		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 		if (status != GL_FRAMEBUFFER_COMPLETE) {
-			WARN_PRINT("Could create heightmap texture status: " + GLES3::TextureStorage::get_singleton()->get_framebuffer_error(status));
+			WARN_PRINT("Could not create heightmap texture, status: " + GLES3::TextureStorage::get_singleton()->get_framebuffer_error(status));
 		}
 #endif
 		GLES3::Utilities::get_singleton()->texture_allocated_data(particles_collision->heightfield_texture, size.x * size.y * 4, "Particles collision heightfield texture");

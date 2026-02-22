@@ -976,9 +976,10 @@ RID GodotPhysicsServer3D::soft_body_create() {
 	return rid;
 }
 
-void GodotPhysicsServer3D::soft_body_update_rendering_server(RID p_body, PhysicsServer3DRenderingServerHandler *p_rendering_server_handler) {
+void GodotPhysicsServer3D::soft_body_update_rendering_server(RID p_body, RequiredParam<PhysicsServer3DRenderingServerHandler> rp_rendering_server_handler) {
 	GodotSoftBody3D *soft_body = soft_body_owner.get_or_null(p_body);
 	ERR_FAIL_NULL(soft_body);
+	EXTRACT_PARAM_OR_FAIL(p_rendering_server_handler, rp_rendering_server_handler);
 
 	soft_body->update_rendering_server(p_rendering_server_handler);
 }
@@ -1603,7 +1604,7 @@ void GodotPhysicsServer3D::distance_joint_set_param(RID p_joint, DistanceJointPa
 	ERR_FAIL_MSG("GodotPhysicsServer3D does not support distance constraint.");
 }
 
-void GodotPhysicsServer3D::free(RID p_rid) {
+void GodotPhysicsServer3D::free_rid(RID p_rid) {
 	_update_shapes(); //just in case
 
 	if (shape_owner.owns(p_rid)) {
@@ -1654,8 +1655,8 @@ void GodotPhysicsServer3D::free(RID p_rid) {
 		}
 
 		active_spaces.erase(space);
-		free(space->get_default_area()->get_self());
-		free(space->get_static_global_body());
+		free_rid(space->get_default_area()->get_self());
+		free_rid(space->get_static_global_body());
 
 		space_owner.free(p_rid);
 		memdelete(space);
