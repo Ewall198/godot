@@ -105,7 +105,7 @@ void JoltDistanceJoint3D::rebuild() {
 	}
 
 	JPH::Body *jolt_body_a = body_a != nullptr ? body_a->get_jolt_body() : nullptr;
-	JPH::Body *jolt_body_b = body_a != nullptr ? body_b->get_jolt_body() : nullptr;
+	JPH::Body *jolt_body_b = body_b != nullptr ? body_b->get_jolt_body() : nullptr;
 
 	ERR_FAIL_COND(jolt_body_a == nullptr && jolt_body_b == nullptr);
 

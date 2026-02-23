@@ -1557,8 +1557,6 @@ void JoltPhysicsServer3D::joint_make_distance(
 	ERR_FAIL_NULL(old_joint);
 
 	JoltBody3D *body_a = body_owner.get_or_null(p_body_a);
-	ERR_FAIL_NULL(body_a);
-
 	JoltBody3D *body_b = body_owner.get_or_null(p_body_b);
 	ERR_FAIL_COND(body_a == body_b);
 

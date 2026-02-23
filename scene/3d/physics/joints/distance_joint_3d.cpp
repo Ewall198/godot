@@ -98,24 +98,22 @@ PhysicsBody3D *DistanceJoint3D::_get_body_from_param(PointParam p_param) const {
 	return Object::cast_to<PhysicsBody3D>(node);
 }
 
-void DistanceJoint3D::_configure_joint(RID p_joint, PhysicsBody3D *p_body_a, PhysicsBody3D *p_body_b) {
+void DistanceJoint3D::_configure_joint(RID p_joint, PhysicsBody3D * /*p_body_a is unused*/, PhysicsBody3D * /*p_body_b is unused*/) {
 	PhysicsServer3D *physics_server = PhysicsServer3D::get_singleton();
 	ERR_FAIL_NULL(physics_server);
 
-	const bool are_bodies_switched = _get_body_from_param(POINT_PARAM_A) == nullptr;
-
-	const Vector3 global_position = are_bodies_switched ? get_global_point(POINT_PARAM_A) : get_global_point(POINT_PARAM_B);
+	const PhysicsBody3D *body_a = _get_body_from_param(POINT_PARAM_A);
+	const PhysicsBody3D *body_b = _get_body_from_param(POINT_PARAM_B);
 	const Vector3 point_a = get_point_param(POINT_PARAM_A);
 	const Vector3 point_b = get_point_param(POINT_PARAM_B);
-	const Vector3 p_body_a_point = are_bodies_switched ? point_b : point_a;
-	const Vector3 p_body_b_point = are_bodies_switched ? point_a : point_b;
 
 	physics_server->joint_make_distance(
 			p_joint,
-			p_body_a->get_rid(),
-			p_body_a_point,
-			p_body_b != nullptr ? p_body_b->get_rid() : RID(),
-			p_body_b != nullptr ? p_body_b_point : global_position);
+			body_a != nullptr ? body_a->get_rid() : RID(),
+			body_a != nullptr ? point_a : get_global_point(POINT_PARAM_A),
+			body_b != nullptr ? body_b->get_rid() : RID(),
+			body_b != nullptr ? point_b : get_global_point(POINT_PARAM_B)
+	);
 
 	for (int i = 0; i < PARAM_MAX; i++) {
 		physics_server->distance_joint_set_param(p_joint, PhysicsServer3D::DistanceJointParam(i), params[i]);
