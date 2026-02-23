@@ -500,6 +500,8 @@ public:
 
 	float generic_6dof_joint_get_applied_force(RID p_joint);
 	float generic_6dof_joint_get_applied_torque(RID p_joint);
+
+	float distance_joint_get_applied_force(RID p_joint);
 };
 
 VARIANT_ENUM_CAST(JoltPhysicsServer3D::HingeJointParamJolt)

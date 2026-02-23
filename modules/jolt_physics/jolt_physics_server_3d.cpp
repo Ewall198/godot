@@ -2054,3 +2054,13 @@ float JoltPhysicsServer3D::generic_6dof_joint_get_applied_torque(RID p_joint) {
 
 	return g6dof_joint->get_applied_torque();
 }
+
+float JoltPhysicsServer3D::distance_joint_get_applied_force(RID p_joint) {
+	JoltJoint3D *joint = joint_owner.get_or_null(p_joint);
+	ERR_FAIL_NULL_V(joint, 0.0f);
+
+	ERR_FAIL_COND_V(joint->get_type() != JOINT_TYPE_DISTANCE_JOINT, 0.0f);
+	JoltDistanceJoint3D *distance_joint = static_cast<JoltDistanceJoint3D *>(joint);
+
+	return distance_joint->get_applied_force();
+}

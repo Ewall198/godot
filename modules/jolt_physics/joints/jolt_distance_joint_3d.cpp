@@ -95,6 +95,21 @@ void JoltDistanceJoint3D::set_jolt_param(Param p_param, float p_value) {
 	}
 }
 
+float JoltDistanceJoint3D::get_applied_force() const {
+	JPH::DistanceConstraint *constraint = static_cast<JPH::DistanceConstraint *>(jolt_ref.GetPtr());
+	ERR_FAIL_NULL_V(constraint, 0.0f);
+
+	JoltSpace3D *space = get_space();
+	ERR_FAIL_NULL_V(space, 0.0f);
+
+	const float last_step = space->get_last_step();
+	if (unlikely(last_step == 0.0f)) {
+		return 0.0f;
+	}
+
+	return constraint->GetTotalLambdaPosition() / last_step;
+}
+
 void JoltDistanceJoint3D::rebuild() {
 	destroy();
 

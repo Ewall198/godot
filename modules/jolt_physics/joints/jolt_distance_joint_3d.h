@@ -71,5 +71,7 @@ public:
 	Vector3 get_local_a() const { return local_ref_a.origin; }
 	Vector3 get_local_b() const { return local_ref_b.origin; }
 
+	float get_applied_force() const;
+
 	virtual void rebuild() override;
 };
